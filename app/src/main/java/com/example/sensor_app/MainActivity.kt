@@ -17,13 +17,21 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import android.util.Log
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.*
 import android.widget.Toast
 import java.io.File
 import java.io.FileWriter
 import com.opencsv.CSVWriter
 import kotlinx.coroutines.*
+import android.view.ViewGroup
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.unit.dp
 //import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 //import android.graphics.Color
 import com.example.sensor_app.ui.theme.Sensor_AppTheme
 import com.github.mikephil.charting.charts.LineChart
@@ -31,6 +39,7 @@ import com.github.mikephil.charting.components.*
 import com.github.mikephil.charting.data.Entry
 import com.github.mikephil.charting.data.LineData
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.navigation.NavController
 import com.github.mikephil.charting.data.LineDataSet
 //import com.example.sensor_app.ui.theme.Sensor_AppTheme
 
@@ -69,7 +78,6 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private var accelerometer: Sensor? = null
     private var accelerometerValues by mutableStateOf(floatArrayOf(0f, 0f, 0f))
     private lateinit var db: AppDatabase
-    private var buttonClicked by mutableStateOf(false)
     private val coroutineScope = CoroutineScope(Dispatchers.Main)
 
     private fun exportDatabaseToCsv(db: AppDatabase) {
@@ -124,10 +132,10 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                 Log.d("Sensor App", "ID: ${entry.id}, X: ${entry.x}, Y: ${entry.y}, Z: ${entry.z}, Timestamp: ${entry.timestamp}")
             }
         }
-        // Clear the database
-        coroutineScope.launch {
-            db.clearAllData()
-        }
+//        // Clear the database
+//        coroutineScope.launch {
+//            db.clearAllData()
+//        }
         setContent {
             val navController = rememberNavController()
             NavHost(navController, startDestination = "main") {
@@ -141,19 +149,13 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                             SensorDataDisplay(
                                 accelerometerValues,
                                 onExportClick = { exportDatabaseToCsv(db) },
-                                onButtonClick = { buttonClicked })
-//                            navController.navigate("graph")
+                                navController = navController
+                            )
                         }
                     }
                 }
                 composable("graph") {
                     GraphScreen(db)
-                    if (buttonClicked) {
-                        GraphScreen(db)
-                    } else {
-                        // Placeholder composable, can be empty or display a message
-                        Text("Click the button to go to the graph screen")
-                    }
                 }
             }
         }
@@ -162,7 +164,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     override fun onResume() {
         super.onResume()
         accelerometer?.also { accel ->
-            sensorManager.registerListener(this, accel, SensorManager.SENSOR_DELAY_NORMAL)
+            sensorManager.registerListener(this, accel, 100000)
         }
     }
 
@@ -195,70 +197,136 @@ class MainActivity : ComponentActivity(), SensorEventListener {
 }
 
 @Composable
-fun SensorDataDisplay(values: FloatArray, onExportClick: () -> Unit,onButtonClick: () -> Unit) {
-    Column(modifier = Modifier.fillMaxSize()) {
-        Text(text = "X: ${values[0]}")
-        Text(text = "Y: ${values[1]}")
-        Text(text = "Z: ${values[2]}")
-        Button(onClick = onExportClick) {
-            Text("Export Data")
-        }
-        Button(onClick = onButtonClick) {
-            Text("Go to Graph")
+fun SensorDataDisplay(
+    values: FloatArray,
+    onExportClick: () -> Unit,
+    navController: NavController
+) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier.fillMaxSize()
+    ) {
+        Surface(
+            modifier = Modifier
+                .width(300.dp)
+                .padding(8.dp),
+            shape = RoundedCornerShape(8.dp),
+            color = MaterialTheme.colorScheme.surface
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(16.dp)
+                    .fillMaxWidth()
+            ) {
+                Text(
+                    text = "Accelerometer Data",
+                    style = TextStyle(
+                        fontWeight = FontWeight.Bold,
+                    ),
+                    modifier = Modifier
+                        .   align(Alignment.CenterHorizontally)
+                        .padding(16.dp),
+                    textAlign = TextAlign.Center
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "X: ${String.format("%.2f", values[0])}",
+                    )
+                    Text(
+                        text = "Y: ${String.format("%.2f", values[1])}",
+                    )
+                    Text(
+                        text = "Z: ${String.format("%.2f", values[2])}",
+                    )
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                Button(
+                    onClick = onExportClick,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Export Data")
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    onClick = { navController.navigate("graph") },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Go to Graph")
+                }
+            }
         }
     }
 }
 
+
 @Composable
 fun GraphScreen(db: AppDatabase) {
-    val xEntries = remember { mutableStateOf(mutableListOf<Entry>()) }
-    val yEntries = remember { mutableStateOf(mutableListOf<Entry>()) }
-    val zEntries = remember { mutableStateOf(mutableListOf<Entry>()) }
-
     val coroutineScope = rememberCoroutineScope()
+    var dataX by remember { mutableStateOf<LineData?>(null) }
+    var dataY by remember { mutableStateOf<LineData?>(null) }
+    var dataZ by remember { mutableStateOf<LineData?>(null) }
 
-    // Fetch data from the database when the composable is first launched
-    LaunchedEffect(db) {
+    LaunchedEffect(key1 = true) {
         coroutineScope.launch {
             val data = withContext(Dispatchers.IO) {
                 db.accelerometerDao().getAllData()
             }
-            xEntries.value.clear()
-            yEntries.value.clear()
-            zEntries.value.clear()
-            data.forEachIndexed { index, entry ->
-                xEntries.value.add(Entry(index.toFloat(), entry.x))
-                yEntries.value.add(Entry(index.toFloat(), entry.y))
-                zEntries.value.add(Entry(index.toFloat(), entry.z))
+
+            val entriesX = mutableListOf<Entry>()
+            val entriesY = mutableListOf<Entry>()
+            val entriesZ = mutableListOf<Entry>()
+
+            data.forEachIndexed { index, accelerometerData ->
+                entriesX.add(Entry(accelerometerData.timestamp.toFloat(), accelerometerData.x))
+                entriesY.add(Entry(accelerometerData.timestamp.toFloat(), accelerometerData.y))
+                entriesZ.add(Entry(accelerometerData.timestamp.toFloat(), accelerometerData.z))
             }
+
+            val dataSetX = LineDataSet(entriesX, "X Axis").apply { axisDependency = YAxis.AxisDependency.LEFT }
+            val dataSetY = LineDataSet(entriesY, "Y Axis").apply { axisDependency = YAxis.AxisDependency.LEFT }
+            val dataSetZ = LineDataSet(entriesZ, "Z Axis").apply { axisDependency = YAxis.AxisDependency.LEFT }
+
+            dataX = LineData(dataSetX)
+            dataY = LineData(dataSetY)
+            dataZ = LineData(dataSetZ)
         }
     }
 
-    Sensor_AppTheme {
-        Column(modifier = Modifier.fillMaxSize()) {
-            Chart(LineData(LineDataSet(xEntries.value, "X")), "X vs Time")
-            Chart(LineData(LineDataSet(yEntries.value, "Y")), "Y vs Time")
-            Chart(LineData(LineDataSet(zEntries.value, "Z")), "Z vs Time")
-        }
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        GraphView(dataX, "Graph X vs Time", Modifier.weight(1f))
+        Spacer(modifier = Modifier.height(16.dp))  // Space between charts
+        GraphView(dataY, "Graph Y vs Time", Modifier.weight(1f))
+        Spacer(modifier = Modifier.height(16.dp))  // Space between charts
+        GraphView(dataZ, "Graph Z vs Time", Modifier.weight(1f))
     }
-
 }
-
 
 @Composable
-fun Chart(data: LineData, title: String) {
-    AndroidView(factory = { context ->
-        LineChart(context).apply {
-            this.data = data
-            xAxis.position = XAxis.XAxisPosition.BOTTOM
-            axisRight.isEnabled = false
-            legend.isEnabled = true
-            description.isEnabled = false
-            setTouchEnabled(true)
-            setPinchZoom(true)
-            invalidate()
+fun GraphView(lineData: LineData?, title: String, modifier: Modifier = Modifier) {
+    Box(modifier = modifier.fillMaxWidth().height(200.dp)) {
+        lineData?.let { data ->
+            AndroidView(factory = { context ->
+                LineChart(context).apply {
+                    layoutParams = ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                    this.data = data
+                    description.text = title
+                    xAxis.position = XAxis.XAxisPosition.BOTTOM
+                    axisLeft.setDrawGridLines(false)
+                    xAxis.setDrawGridLines(false)
+                    xAxis.setDrawAxisLine(true)
+                    legend.form = Legend.LegendForm.LINE
+                    setTouchEnabled(true)
+                    setPinchZoom(true)
+                    invalidate()
+                }
+            })
         }
-    })
+    }
 }
-
 
